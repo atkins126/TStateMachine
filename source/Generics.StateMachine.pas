@@ -30,11 +30,6 @@ interface
 uses
   System.SysUtils, Generics.Collections, Generics.Nullable;
 
-{ TODO : What should happen if you add a Guard, OnEntry or OnExit and there is
-  already one? Fail, or maintain a list? }
-{ TODO : GuardProc and TransitionProc should take generic parameters that
-  describe the states/triggers involved }
-
 type
   EStateMachineException = class(Exception);
   EGuardFailure = class(EStateMachineException);
@@ -42,17 +37,17 @@ type
   EUnknownState = class(EStateMachineException);
   EInvalidStateMachine = class(EStateMachineException);
 
-  TGuardProc = reference to function: boolean;
+  TGuardProc<TTrigger> = reference to function(Trigger : TTrigger): boolean;
   TTransitionProc = reference to procedure;
 
   TTriggerHolder<TState, TTrigger> = class
   strict private
     FTrigger: TTrigger;
     FDestination: TState;
-    FGuard: TGuardProc;
+    FGuard: TGuardProc<TTrigger>;
   public
     constructor Create(ATrigger: TTrigger; ADestination: TState;
-      AGuard: TGuardProc = nil); virtual;
+      AGuard: TGuardProc<TTrigger> = nil); virtual;
     function CanExecute: boolean;
     property Destination: TState read FDestination;
   end;
@@ -74,8 +69,9 @@ type
     constructor Create(AStateMachine: TStateMachine<TState, TTrigger>;
       AState: TState); virtual;
     destructor Destroy; override;
+    function Destinations : TList<TState>;
     function Trigger(ATrigger: TTrigger; ADestination: TState;
-      AGuard: TGuardProc = nil): TTStateHolder<TState, TTrigger>;
+      AGuard: TGuardProc<TTrigger> = nil): TTStateHolder<TState, TTrigger>;
     function OnEntry(AOnEntry: TTransitionProc)
       : TTStateHolder<TState, TTrigger>;
     function OnExit(AOnExit: TTransitionProc)
@@ -129,6 +125,7 @@ type
     /// parameter.
     /// </returns>
     function State(AState: TState): TTStateHolder<TState, TTrigger>;
+    procedure Validate;
     property StateCount: Integer read GetStateCount;
     property CurrentState: TTStateHolder<TState, TTrigger>
       read GetCurrentState;
@@ -144,13 +141,13 @@ implementation
 function TTriggerHolder<TState, TTrigger>.CanExecute: boolean;
 begin
   if Assigned(FGuard) then
-    Result := FGuard
+    Result := FGuard(FTrigger)
   else
     Result := True;
 end;
 
 constructor TTriggerHolder<TState, TTrigger>.Create(ATrigger: TTrigger;
-  ADestination: TState; AGuard: TGuardProc);
+  ADestination: TState; AGuard: TGuardProc<TTrigger>);
 begin
   inherited Create;
   FTrigger := ATrigger;
@@ -161,7 +158,7 @@ end;
 { TTStateCaddy<TState, TTrigger> }
 
 function TTStateHolder<TState, TTrigger>.Trigger(ATrigger: TTrigger;
-  ADestination: TState; AGuard: TGuardProc): TTStateHolder<TState, TTrigger>;
+  ADestination: TState; AGuard: TGuardProc<TTrigger>): TTStateHolder<TState, TTrigger>;
 var
   LConfiguredTrigger: TTriggerHolder<TState, TTrigger>;
 begin
@@ -179,6 +176,15 @@ begin
   FTriggers := TObjectDictionary < TTrigger, TTriggerHolder < TState,
     TTrigger >>.Create([doOwnsValues]);
   FState := AState;
+end;
+
+function TTStateHolder<TState, TTrigger>.Destinations: TList<TState>;
+var
+  LTriggerHolder: TTriggerHolder<TState, TTrigger>;
+begin
+  Result := TList<TState>.Create;
+  for LTriggerHolder in FTriggers.Values do
+    Result.Add(LTriggerHolder.Destination);
 end;
 
 destructor TTStateHolder<TState, TTrigger>.Destroy;
@@ -282,7 +288,7 @@ var
   LInitialState: TTStateHolder<TState, TTrigger>;
 begin
   if not FInitialState.HasValue then
-    raise EInvalidStateMachine.Create('StateMachine has not initial state');
+    raise EInvalidStateMachine.Create('StateMachine has no initial state');
 
   if not FStates.TryGetValue(FInitialState, LInitialState) then
     raise EUnknownState.Create('Unable to find Initial State');
@@ -333,6 +339,50 @@ begin
   FCurrentState := AState;
 
   CurrentState.Enter;
+end;
+
+procedure TStateMachine<TState, TTrigger>.Validate;
+var
+  LUnreachableStates : TList<TState>;
+  LStateHolder, LInitialState : TTStateHolder<TState, TTrigger>;
+  LState: TState;
+  LDestinations : TList<TState>;
+  LValid : boolean;
+begin
+  // State Machine has initial state?
+  LInitialState := InitialState;
+  // all states are reachable?
+  LUnreachableStates := TList<TState>.Create;
+  try
+    // fill all states
+    for LState in FStates.Keys do
+    begin
+      LUnreachableStates.Add(LState);
+    end;
+    // remove initial state, as it is valid to have an initial state with
+    // no incoming trigger
+    LUnreachableStates.Remove(InitialState.State);
+    // remove those which are destinations of triggers
+    for LStateHolder in FStates.Values do
+    begin
+      LDestinations := LStateHolder.Destinations;
+      try
+        for LState in LDestinations do
+          LUnreachableStates.Remove(LState);
+      finally
+        LDestinations.Free;
+      end;
+    end;
+    if LUnreachableStates.Count > 0 then
+    begin
+      LValid := False;
+      // would be nice to include the states in the message, however will need to
+      // research generic way to convert TState to string
+      raise EInvalidStateMachine.Create(Format('State Machine has %d unreachable state(s)', [LUnreachableStates.Count]));
+    end;
+  finally
+    LUnreachableStates.Free;
+  end;
 
 end;
 

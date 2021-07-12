@@ -23,6 +23,7 @@ type
     procedure TestEnumTriggerNilGuard;
     procedure TestEnumTriggerPassingGuard;
     procedure TestEnumTriggerFailingGuard;
+    procedure TestEnumTriggerGuardHasAccessToTrigger;
     procedure TestStringTriggerNilGuard;
     procedure TestStringTriggerPassingGuard;
     procedure TestStringTriggerFailingGuard;
@@ -52,10 +53,11 @@ type
     procedure TestAddState;
     procedure TestActiveWithNoInitialState;
     procedure TestTwoInitialStates;
+    procedure TestUnreachableStates;
   end;
 
   // test data
-  TDoorStates = (dsOpen, dsClosed);
+  TDoorStates = (dsOpen, dsClosed, dsSlightlyAjar, dsMoreAjar);
   TDoorTriggers = (dtOpen, dtClose);
 
   ENotifyException = class(Exception);
@@ -97,9 +99,9 @@ implementation
 procedure TestTConfiguredTrigger.TestEnumTriggerFailingGuard;
 var
   DoorStates: TStateMachine<TDoorStates, TDoorTriggers>;
-  FailingGuard: TGuardProc;
+  FailingGuard: TGuardProc<TDoorTriggers>;
 begin
-  FailingGuard := function: boolean
+  FailingGuard := function(Trigger : TDoorTriggers): boolean
     begin
       Result := False;
     end;
@@ -117,6 +119,37 @@ begin
     except
       on E: EGuardFailure do
         Check(True, 'Guard failed as expected');
+    end;
+  finally
+    DoorStates.Active := False;
+    DoorStates.Free;
+  end;
+end;
+
+procedure TestTConfiguredTrigger.TestEnumTriggerGuardHasAccessToTrigger;
+var
+  DoorStates: TStateMachine<TDoorStates, TDoorTriggers>;
+   CheckingGuard: TGuardProc<TDoorTriggers>;
+begin
+  CheckingGuard := function(Trigger : TDoorTriggers): boolean
+    begin
+
+      Result := Trigger = TDoorTriggers.dtOpen;
+    end;
+
+  DoorStates := TStateMachine<TDoorStates, TDoorTriggers>.Create;
+  try
+    DoorStates.State(TDoorStates.dsOpen).Trigger(TDoorTriggers.dtClose,
+      TDoorStates.dsClosed);
+    DoorStates.State(TDoorStates.dsClosed).Initial.Trigger(TDoorTriggers.dtOpen,
+      TDoorStates.dsOpen, CheckingGuard);
+    DoorStates.Active := True;
+    try
+      DoorStates.CurrentState.Execute(TDoorTriggers.dtOpen);
+      Check(True, 'No exception, as expected');
+    except
+      on E: Exception do
+        Fail(Format('Unexpected exception %s', [E.ToString]));
     end;
   finally
     DoorStates.Active := False;
@@ -151,9 +184,9 @@ end;
 procedure TestTConfiguredTrigger.TestEnumTriggerPassingGuard;
 var
   DoorStates: TStateMachine<TDoorStates, TDoorTriggers>;
-  PassingGuard: TGuardProc;
+  PassingGuard: TGuardProc<TDoorTriggers>;
 begin
-  PassingGuard := function: boolean
+  PassingGuard := function(Trigger : TDoorTriggers): boolean
     begin
       Result := True;
     end;
@@ -181,9 +214,9 @@ end;
 procedure TestTConfiguredTrigger.TestStringTriggerFailingGuard;
 var
   DoorStates: TStateMachine<string, string>;
-  FailingGuard: TGuardProc;
+  FailingGuard: TGuardProc<string>;
 begin
-  FailingGuard := function: boolean
+  FailingGuard := function(Trigger : string): boolean
     begin
       Result := False;
     end;
@@ -233,9 +266,9 @@ end;
 procedure TestTConfiguredTrigger.TestStringTriggerPassingGuard;
 var
   DoorStates: TStateMachine<string, string>;
-  PassingGuard: TGuardProc;
+  PassingGuard: TGuardProc<string>;
 begin
-  PassingGuard := function: boolean
+  PassingGuard := function(Trigger : string): boolean
     begin
       Result := True;
     end;
@@ -327,7 +360,7 @@ end;
 procedure TestTConfiguredState.TestEnumNoOnEntryWithFailingGuard;
 var
   LOnEntry: TTransitionProc;
-  LFailingGuard: TGuardProc;
+  LFailingGuard: TGuardProc<TDoorTriggers>;
   FDoorStates: TStateMachine<TDoorStates, TDoorTriggers>;
 begin
   LOnEntry := procedure
@@ -335,7 +368,7 @@ begin
       raise ENotifyException.Create('In OnExit');
     end;
 
-  LFailingGuard := function: boolean
+  LFailingGuard := function(Trigger : TDoorTriggers): boolean
     begin
       Result := False;
     end;
@@ -363,7 +396,7 @@ end;
 procedure TestTConfiguredState.TestEnumNoOnExitWithFailingGuard;
 var
   LOnExit: TTransitionProc;
-  LFailingGuard: TGuardProc;
+  LFailingGuard: TGuardProc<TDoorTriggers>;
   FDoorStates: TStateMachine<TDoorStates, TDoorTriggers>;
 begin
   LOnExit := procedure
@@ -371,7 +404,7 @@ begin
       raise ENotifyException.Create('In OnExit');
     end;
 
-  LFailingGuard := function: boolean
+  LFailingGuard := function(Trigger : TDoorTriggers): boolean
     begin
       Result := False;
     end;
@@ -482,7 +515,7 @@ end;
 procedure TestTConfiguredState.TestStringNoOnEntryWithFailingGuard;
 var
   LOnEntry: TTransitionProc;
-  LFailingGuard: TGuardProc;
+  LFailingGuard: TGuardProc<string>;
   FDoorStates: TStateMachine<string, string>;
 begin
   LOnEntry := procedure
@@ -490,7 +523,7 @@ begin
       raise ENotifyException.Create('In OnExit');
     end;
 
-  LFailingGuard := function: boolean
+  LFailingGuard := function(Trigger : string): boolean
     begin
       Result := False;
     end;
@@ -519,7 +552,7 @@ end;
 procedure TestTConfiguredState.TestStringNoOnExitWithFailingGuard;
 var
   LOnExit: TTransitionProc;
-  LFailingGuard: TGuardProc;
+  LFailingGuard: TGuardProc<string>;
   FDoorStates: TStateMachine<string, string>;
 begin
   LOnExit := procedure
@@ -527,7 +560,7 @@ begin
       raise ENotifyException.Create('In OnExit');
     end;
 
-  LFailingGuard := function: boolean
+  LFailingGuard := function(Trigger : string): boolean
     begin
       Result := False;
     end;
@@ -668,6 +701,39 @@ begin
     except
       on E: EInvalidStateMachine do
         Check(true, 'As expected for a statemachine with two initial states');
+    end;
+  finally
+    FDoorStates.Free;
+  end;
+end;
+
+procedure TestTStateMachine.TestUnreachableStates;
+var
+  FDoorStates: TStateMachine<TDoorStates, TDoorTriggers>;
+begin
+  FDoorStates := TStateMachine<TDoorStates, TDoorTriggers>.Create;
+  try
+    FDoorStates
+      .State(TDoorStates.dsOpen)
+        .Initial
+        .Trigger(TDoorTriggers.dtClose, TDoorStates.dsClosed);
+    FDoorStates
+      .State(TDoorStates.dsClosed)
+        .Trigger(TDoorTriggers.dtOpen, TDoorStates.dsOpen);
+    FDoorStates
+      .State(TDoorStates.dsSlightlyAjar)  // unreachable state
+        .Trigger(TDoorTriggers.dtOpen, TDoorStates.dsOpen)
+        .Trigger(TDoorTriggers.dtClose, TDoorStates.dsClosed);
+    FDoorStates
+      .State(TDoorStates.dsMoreAjar)      // unreachable state
+        .Trigger(TDoorTriggers.dtOpen, TDoorStates.dsOpen)
+        .Trigger(TDoorTriggers.dtClose, TDoorStates.dsClosed);
+    try
+      FDoorStates.Validate;
+      Check(false, 'Two unreachable states, so validate should have failed');
+    except
+      on E: EInvalidStateMachine do
+        Check(true, 'As expected for a statemachine with two unreachable states');
     end;
   finally
     FDoorStates.Free;
